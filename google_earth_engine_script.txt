@@ -1,0 +1,131 @@
+Map.setCenter(77.60553970566565,12.995537699016191);
+Map.setZoom(11);
+
+function maskS2clouds(image) {
+  var qa = image.select('QA60');
+
+  var cloudBitMask = 1 << 10;
+  var cirrusBitMask = 1 << 11;
+
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0)
+      .and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+
+  return image.updateMask(mask).divide(10000);
+}
+var start = '2023-01-01';
+var end = '2023-06-10';
+var dataset = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+                  .filterDate('2023-01-01', '2023-06-10')
+                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 1))
+                  .map(maskS2clouds)
+                  .mean()
+                  .select(['B12','B11','B2','B3','B4','B5','B6','B7','B8','B8A']);
+                  
+var rgbVis = {
+  min: 0.03,
+  max: 0.24,
+  bands: ['B4', 'B3', 'B2'],
+};
+
+Map.addLayer(dataset,rgbVis);
+
+//////////////////////////////////////
+
+var imgVV = ee.ImageCollection('COPERNICUS/S1_GRD')
+        .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
+        .filter(ee.Filter.eq('instrumentMode', 'IW'))
+        .select('VV')
+        .map(function(image) {
+          var edge = image.lt(-30.0);
+          var maskedImage = image.mask().and(edge.not());
+          return image.updateMask(maskedImage);
+        });
+
+var desc = imgVV.filter(ee.Filter.eq('orbitProperties_pass', 'DESCENDING'));
+
+var lateSpring = ee.Filter.date('2023-02-21', '2023-06-10');
+
+var descChange = desc.filter(lateSpring).mean();
+// Map.addLayer(descChange);
+
+/////////////////////////////////////
+
+
+var numbers = [0.24189985,  0.20321764 , 0.0999806,   0.12486774 , 0.14187018,  0.16611456,
+  0.20628005 , 0.22598625,  0.23239572,  0.23865846, -7.68856037];
+var m = [0.06791765, 0.06944238, 0.04771776, 0.0500413,  0.06032911, 0.05443358,
+ 0.05460369, 0.05942544, 0.06437212, 0.06172826, 4.63106532];
+
+var b11 = dataset.select(['B11']).subtract(numbers[0]).divide(m[0]);
+var b12 = dataset.select(['B12']).subtract(numbers[1]).divide(m[1]);
+var b2 = dataset.select(['B2']).subtract(numbers[2]) .divide(m[2]);
+var b3 = dataset.select(['B3']).subtract(numbers[3]) .divide(m[3]);
+var b4 = dataset.select(['B4']).subtract(numbers[4]) .divide(m[4]);
+var b5 = dataset.select(['B5']).subtract(numbers[5]) .divide(m[5]);
+var b6 = dataset.select(['B6']).subtract(numbers[6]).divide(m[6]);
+var b7 = dataset.select(['B7']).subtract(numbers[7]).divide(m[7]);
+var b8 = dataset.select(['B8']).subtract(numbers[8]) .divide(m[8]);
+var b8a = dataset.select(['B8A']).subtract(numbers[9]) .divide(m[9]);
+var radar = descChange.subtract(numbers[10]) .divide(m[10]);
+
+var logistic = [-2.32219757,  3.4227659,   6.29897862, -3.75343582,  0.42466546, -3.11985703,
+   4.4414159,  -4.55201852, -1.2864677,  2.38275844,  1.47026788];
+  
+var c = 1.69351338;
+
+var e_theta = b11.multiply(logistic[0]).add(b12.multiply(logistic[1])).add(b2.multiply(logistic[2])).add(b3.multiply(logistic[3]))
+.add(b4.multiply(logistic[4])).add(b5.multiply(logistic[5])).add(b6.multiply(logistic[6]))
+.add(b7.multiply(logistic[7])).add(b8.multiply(logistic[8])).add(b8a.multiply(logistic[9]))
+.add(radar.multiply(logistic[10])).add(c).exp();
+
+var vis = {
+  min: 0.7,
+  max: 1,
+};
+var m_radar = e_theta.divide(e_theta.add(1));
+Map.addLayer(m_radar,vis,'model1',true,0.45);
+////////////////////////////////////////////////////
+var mainTitle = ui.Label("Urban Extraction Model", {
+    fontWeight: 'bold',
+    fontSize: '16px'
+});
+var places = {
+  Delhi:[77.22291183597842,28.673926925105626],
+  Hyderabad:[78.47048271543134,17.456352179337344],
+  Bengaluru:[77.60553970566565,12.995537699016191],
+  Kolkata:[88.35817892372835,22.666845374706575],
+  Lucknow:[80.94148277399486,26.86988447690029],
+  Jaipur:[75.76995847712328,26.931826914028665],
+  Pune:[73.83996972432396,18.599157152555204],
+};
+
+var select = ui.Select({
+  items: Object.keys(places),
+  onChange: function(key) {
+    Map.setCenter(places[key][0], places[key][1]);
+  }
+});
+
+select.setPlaceholder('Choose a location...');
+select.setValue("Bengaluru");
+var checkbox = ui.Checkbox('Builtup Prediction layer', true);
+var checkbox1 = ui.Checkbox('Satellite layer', true);
+
+checkbox.onChange(function(checked) {
+  Map.layers().get(1).setShown(checked);
+});
+
+checkbox1.onChange(function(checked) {
+  Map.layers().get(0).setShown(checked);
+});
+
+var panel = ui.Panel();
+panel.style().set({
+  width:'200px',
+  position: 'top-right'
+});
+panel.add(mainTitle);
+panel.add(select);
+panel.add(checkbox);
+panel.add(checkbox1);
+Map.add(panel);
